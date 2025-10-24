@@ -66,5 +66,7 @@ Thoth > /help
 - [uv](https://docs.astral.sh/uv/) for package management
 - [Python 3.13+](https://www.python.org/downloads/)
 - [Git](https://git-scm.com/downloads)
+- [Google Cloud CLI](https://docs.cloud.google.com/sdk/docs/install)
+
 
 
