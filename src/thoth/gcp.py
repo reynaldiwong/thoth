@@ -526,12 +526,20 @@ def show_gcp_config(config: Dict[str, Any]) -> None:
     table.add_row("Region", config.get("region", "[dim]Not set[/dim]"))
     table.add_row("Zone", config.get("zone", "[dim]Not set[/dim]"))
     
-    # Show authenticated account
-    auth_account = config.get("authenticated_account")
-    if auth_account:
-        table.add_row("GCloud Account", f"[green]{auth_account}[/green]")
+    # Show authenticated account - check actual gcloud status
+    auth_info = check_gcloud_auth()
+    if auth_info:
+        current_email = auth_info.get("email")
+        stored_email = config.get("authenticated_account")
+        
+        # Update config if they don't match
+        if current_email != stored_email:
+            config["authenticated_account"] = current_email
+            save_gcp_config(config)
+        
+        table.add_row("GCloud Account", f"[green]{current_email}[/green]")
     else:
-        table.add_row("GCloud Account", "[dim]Not set[/dim]")
+        table.add_row("GCloud Account", "[dim]Not authenticated[/dim]")
     
     table.add_row(
         "Service Account", 

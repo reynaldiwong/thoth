@@ -4,6 +4,7 @@ import json
 import subprocess
 import atexit
 import re
+import getpass
 from pathlib import Path
 from threading import Thread
 from typing import Optional, Dict
@@ -109,6 +110,74 @@ def process_file_mentions(message: str) -> str:
         enhanced_message += "".join(file_contents)
     
     return enhanced_message
+
+
+def is_infrastructure_related_query(message: str) -> bool:
+    """
+    Determine if a user query is related to infrastructure/DevOps.
+    
+    Uses simple pattern matching - the AI will make the final decision
+    based on the prompt guidelines.
+    
+    Returns True if the query might be about infrastructure, False otherwise.
+    """
+    message_lower = message.lower()
+    
+    # Exclude obvious non-infrastructure queries
+    # Math/calculation patterns
+    if re.search(r'\d+\s*[\+\-\*\/\%]\s*\d+', message):
+        return False
+    
+    # Programming/coding questions (general knowledge)
+    if any(word in message_lower for word in ['function', 'variable', 'class', 'method', 'algorithm', 'code', 'programming']):
+        # Unless it's about infrastructure code
+        if not any(term in message_lower for term in ['terraform', 'cloudformation', 'ansible', 'infrastructure as code', 'iac']):
+            return False
+    
+    # General knowledge questions without infrastructure context
+    general_starters = ['what is ', 'who is ', 'when is ', 'where is ', 'why is ', 'how to ', 'explain ', 'define ']
+    if any(message_lower.startswith(starter) for starter in general_starters):
+        # Check if it's followed by infrastructure terms
+        infra_terms = [
+            'infrastructure', 'server', 'cloud', 'network', 'deployment',
+            'vm', 'instance', 'container', 'kubernetes', 'docker',
+            'gcp', 'aws', 'azure', 'firewall', 'load balancer'
+        ]
+        if not any(term in message_lower for term in infra_terms):
+            return False
+    
+    # Infrastructure keywords (broad match)
+    infra_keywords = [
+        # Resources
+        'vm', 'vms', 'instance', 'instances', 'server', 'servers',
+        'machine', 'machines', 'node', 'nodes',
+        'network', 'networks', 'subnet', 'subnets', 'vpc',
+        'firewall', 'firewalls', 'load balancer', 'lb',
+        'container', 'containers', 'pod', 'pods',
+        'cluster', 'clusters', 'infrastructure', 'infra',
+        
+        # Cloud platforms
+        'gcp', 'google cloud', 'aws', 'azure', 'cloud platform',
+        
+        # DevOps tools
+        'jenkins', 'rundeck', 'grafana', 'prometheus', 'thanos',
+        'kubernetes', 'k8s', 'docker',
+        
+        # Actions
+        'deploy', 'deployment', 'scale', 'scaling',
+        'monitor', 'monitoring', 'metric', 'metrics',
+        
+        # Common environment names (generic)
+        'production', 'prod', 'staging', 'stage', 'development', 'dev',
+        'testing', 'test', 'qa', 'uat',
+    ]
+    
+    # Check if any infrastructure keyword is in the message
+    for keyword in infra_keywords:
+        if keyword in message_lower:
+            return True
+    
+    return False
 
 
 class SlashCompleter(Completer):
@@ -365,7 +434,7 @@ def run_repl(client: OpenAI, provider: str, model: str) -> None:
 
                 elif cmd == "ssh":
                     configure_ssh_interactive()
-                
+
                 elif cmd == "provider":
                     console.print("[cyan]🔄 Switching AI provider...[/cyan]\n")
                     
@@ -379,30 +448,48 @@ def run_repl(client: OpenAI, provider: str, model: str) -> None:
                         console.print("[yellow]Provider change cancelled[/yellow]\n")
                         continue
                     
-                    # Get API key
-                    from rich.prompt import Prompt
-                    api_key = Prompt.ask(
-                        f"[bold]Enter your {new_provider} API key[/bold]",
-                        password=True
-                    ).strip()
+                    # Get API key using getpass
+                    console.print(f"\n[bold]Enter your {new_provider} API key:[/bold]")
+                    console.print("[dim](Your input will be hidden)[/dim]")
+                    api_key = getpass.getpass("API Key: ").strip()
                     
                     if not api_key:
                         console.print("[yellow]No API key provided. Cancelled.[/yellow]\n")
                         continue
                     
-                    # Fetch models dynamically
-                    console.print(f"[dim]Fetching available models from {new_provider}...[/dim]")
+                    # Validate API key by fetching models
+                    console.print(f"[dim]Validating API key and fetching models from {new_provider}...[/dim]")
                     
-                    if new_provider == "OpenAI":
-                        model_list = fetch_openai_models(api_key)
-                    else:  # OpenRouter
-                        model_list = fetch_openrouter_models(api_key)
+                    model_list = None
+                    try:
+                        if new_provider == "OpenAI":
+                            model_list = fetch_openai_models(api_key)
+                        else:
+                            model_list = fetch_openrouter_models(api_key)
+                        
+                        if not model_list:
+                            console.print(f"[red]✗ No models available from {new_provider}.[/red]")
+                            console.print(f"[red]The API key may be invalid or expired.[/red]\n")
+                            continue
+                        
+                        console.print(f"[green]✓ API key validated successfully[/green]")
+                        console.print(f"[green]✓ Found {len(model_list)} models[/green]\n")
                     
-                    if not model_list:
-                        console.print(f"[red]No models available from {new_provider}. Cancelled.[/red]\n")
+                    except ValueError as e:
+                        console.print(f"[red]✗ API key validation failed[/red]")
+                        console.print(f"[red]{str(e)}[/red]\n")
+                        console.print("[yellow]Please check your API key and try again.[/yellow]\n")
+                        continue
+                    except Exception as e:
+                        console.print(f"[red]✗ Unexpected error during validation[/red]")
+                        console.print(f"[red]{str(e)}[/red]\n")
+                        console.print("[yellow]Please try again.[/yellow]\n")
                         continue
                     
-                    console.print(f"[green]✓ Found {len(model_list)} models[/green]\n")
+                    # Only proceed if we have a valid model list
+                    if not model_list:
+                        console.print("[yellow]Provider change cancelled[/yellow]\n")
+                        continue
                     
                     new_model = select_model_interactive(model_list)
                     
@@ -432,51 +519,7 @@ def run_repl(client: OpenAI, provider: str, model: str) -> None:
                     
                     # Reset chat history
                     chat_history = [system_prompt]
-                
-                elif cmd == "model":
-                    console.print("[cyan]🔄 Changing AI model...[/cyan]\n")
-                    
-                    # Get current config
-                    config = load_config()
-                    api_key = config.get("api_key", "")
-                    
-                    if not api_key:
-                        console.print("[red]No API key found. Please use /provider first.[/red]\n")
-                        continue
-                    
-                    # Fetch models dynamically
-                    console.print(f"[dim]Fetching available models from {provider}...[/dim]")
-                    
-                    if provider == "OpenAI":
-                        model_list = fetch_openai_models(api_key)
-                    else:  # OpenRouter
-                        model_list = fetch_openrouter_models(api_key)
-                    
-                    if not model_list:
-                        console.print(f"[red]No models available from {provider}. Cancelled.[/red]\n")
-                        continue
-                    
-                    console.print(f"[green]✓ Found {len(model_list)} models[/green]\n")
-                    
-                    new_model = select_model_interactive(model_list)
-                    
-                    if not new_model:
-                        console.print("[yellow]Model change cancelled[/yellow]\n")
-                        continue
-                    
-                    # Update model
-                    model = new_model
-                    
-                    # Save configuration with existing API key
-                    save_config(provider, api_key, model)
-                    console.print(f"[green]✓ Model changed to {model}[/green]\n")
-                    
-                    # Show updated banner
-                    show_session_banner(provider, model)
-                    
-                    # Reset chat history
-                    chat_history = [system_prompt]
-                
+            
                 elif cmd == "clear":
                     chat_history = [system_prompt]
                     console.print("[green]✓ Conversation history cleared[/green]\n")
@@ -507,6 +550,9 @@ def run_repl(client: OpenAI, provider: str, model: str) -> None:
 
             # Normal AI Chat Message - Process @file mentions FIRST
             enhanced_message = process_file_mentions(user_input)
+            
+            # Check if this is an infrastructure-related query
+            is_infra_query = is_infrastructure_related_query(user_input)
 
             # Add MCP context
             if mcp_config.get("servers"):
@@ -517,40 +563,44 @@ def run_repl(client: OpenAI, provider: str, model: str) -> None:
                 except Exception as e:
                     console.print(f"[yellow]Error getting MCP context: {e}[/yellow]")
 
-            # Add GCP context
-            try:
-                gcp_context = get_gcp_context_for_ai()
-                if gcp_context:
-                    enhanced_message += gcp_context
-            except Exception as e:
-                console.print(f"[yellow]Error getting GCP context: {e}[/yellow]")
+            # Add GCP context - ONLY for infrastructure queries
+            if is_infra_query:
+                try:
+                    gcp_context = get_gcp_context_for_ai()
+                    if gcp_context:
+                        enhanced_message += gcp_context
+                except Exception as e:
+                    console.print(f"[yellow]Error getting GCP context: {e}[/yellow]")
 
-            # Add SSH context
-            try:
-                ssh_context = get_ssh_context_for_ai()
-                if ssh_context:
-                    enhanced_message += ssh_context
-            except Exception as e:
-                console.print(f"[yellow]Error getting SSH context: {e}[/yellow]")
+            # Add SSH context - ONLY for infrastructure queries
+            if is_infra_query:
+                try:
+                    ssh_context = get_ssh_context_for_ai()
+                    if ssh_context:
+                        enhanced_message += ssh_context
+                except Exception as e:
+                    console.print(f"[yellow]Error getting SSH context: {e}[/yellow]")
 
-            # Add Infrastructure context
-            try:
-                from .gcp import load_gcp_config
-                from .infrastructure import has_stored_knowledge
-                
-                gcp_config_data = load_gcp_config()
-                if gcp_config_data.get("project_id"):
-                    # Show notification that we're loading knowledge
-                    if has_stored_knowledge(gcp_config_data["project_id"]):
-                        console.print("[dim]📚 Loading infrastructure knowledge...[/dim]")
+            # Add Infrastructure context - ONLY if query is infrastructure-related
+            if is_infra_query:
+                try:
+                    from .gcp import load_gcp_config
+                    from .infrastructure import has_stored_knowledge
                     
-                    infra_context = get_infrastructure_context_for_ai(gcp_config_data["project_id"])
-                    if infra_context:
-                        enhanced_message += infra_context
-                        # Show what knowledge was loaded
-                        console.print("[dim]✓ Knowledge loaded: VMs, Networks, Firewall Rules, Load Balancers[/dim]\n")
-            except Exception as e:
-                console.print(f"[yellow]Error getting infrastructure context: {e}[/yellow]")
+                    gcp_config_data = load_gcp_config()
+                    
+                    # Check if we have a GCP project configured
+                    if gcp_config_data.get("project_id"):
+                        # Only load knowledge if it exists
+                        if has_stored_knowledge(gcp_config_data["project_id"]):
+                            console.print("[dim]📚 Loading infrastructure knowledge...[/dim]")
+                            
+                            infra_context = get_infrastructure_context_for_ai(gcp_config_data["project_id"])
+                            if infra_context:
+                                enhanced_message += infra_context
+                                console.print("[dim]✓ Knowledge loaded: VMs, Networks, Firewall Rules, Load Balancers[/dim]\n")
+                except Exception as e:
+                    console.print(f"[yellow]Error getting infrastructure context: {e}[/yellow]")
             
             chat_history.append({"role": "user", "content": enhanced_message})
             
@@ -577,74 +627,76 @@ def run_repl(client: OpenAI, provider: str, model: str) -> None:
                                     }
                                 })
                     
-                    # Add GCP command execution function
-                    from .gcp import load_gcp_config
-                    gcp_config = load_gcp_config()
-                    
-                    if gcp_config.get("project_id"):
-                        tools.append({
-                            "type": "function",
-                            "function": {
-                                "name": "gcp_execute_command",
-                                "description": "Execute a gcloud command and return the output. Use this to fetch GCP resource information.",
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {
-                                        "args": {
-                                            "type": "array",
-                                            "items": {"type": "string"},
-                                            "description": "List of gcloud command arguments (e.g., ['compute', 'instances', 'list'])"
-                                        },
-                                        "format": {
-                                            "type": "string",
-                                            "description": "Output format (e.g., 'json', 'table', 'yaml'). Default is 'json'.",
-                                            "default": "json"
-                                        }
-                                    },
-                                    "required": ["args"]
-                                }
-                            }
-                        })
+                    # Add GCP/SSH tools ONLY for infrastructure queries
+                    if is_infra_query:
+                        # Add GCP command execution function
+                        from .gcp import load_gcp_config
+                        gcp_config = load_gcp_config()
                         
-                        # Add Infrastructure Knowledge Update function
-                        tools.append({
-                            "type": "function",
-                            "function": {
-                                "name": "update_infrastructure_knowledge",
-                                "description": "Update the infrastructure knowledge base by re-analyzing GCP resources. Use this when the user asks to update, refresh, or re-analyze infrastructure knowledge.",
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {},
-                                    "required": []
-                                }
-                            }
-                        })
-
-                    # Add SSH command execution function
-                    ssh_config = load_ssh_config()
-
-                    if ssh_config.get("default_user"):
-                        tools.append({
-                            "type": "function",
-                            "function": {
-                                "name": "ssh_execute_command",
-                                "description": "Execute a command on a GCP VM via SSH. First get the VM's IP using gcp_execute_command, then use this function to run commands on that VM.",
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {
-                                        "host": {
-                                            "type": "string",
-                                            "description": "The VM's IP address (internal or external IP from GCP)"
+                        if gcp_config.get("project_id"):
+                            tools.append({
+                                "type": "function",
+                                "function": {
+                                    "name": "gcp_execute_command",
+                                    "description": "Execute a gcloud command and return the output. Use this to fetch GCP resource information.",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {
+                                            "args": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "description": "List of gcloud command arguments (e.g., ['compute', 'instances', 'list'])"
+                                            },
+                                            "format": {
+                                                "type": "string",
+                                                "description": "Output format (e.g., 'json', 'table', 'yaml'). Default is 'json'.",
+                                                "default": "json"
+                                            }
                                         },
-                                        "command": {
-                                            "type": "string",
-                                            "description": "Command to execute on the remote VM"
-                                        }
-                                    },
-                                    "required": ["host", "command"]
+                                        "required": ["args"]
+                                    }
                                 }
-                            }
-                        })
+                            })
+                            
+                            # Add Infrastructure Knowledge Update function
+                            tools.append({
+                                "type": "function",
+                                "function": {
+                                    "name": "update_infrastructure_knowledge",
+                                    "description": "Update the infrastructure knowledge base by re-analyzing GCP resources. Use this when the user asks to update, refresh, or re-analyze infrastructure knowledge.",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {},
+                                        "required": []
+                                    }
+                                }
+                            })
+
+                        # Add SSH command execution function
+                        ssh_config = load_ssh_config()
+
+                        if ssh_config.get("default_user"):
+                            tools.append({
+                                "type": "function",
+                                "function": {
+                                    "name": "ssh_execute_command",
+                                    "description": "Execute a command on a GCP VM via SSH. First get the VM's IP using gcp_execute_command, then use this function to run commands on that VM.",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {
+                                            "host": {
+                                                "type": "string",
+                                                "description": "The VM's IP address (internal or external IP from GCP)"
+                                            },
+                                            "command": {
+                                                "type": "string",
+                                                "description": "Command to execute on the remote VM"
+                                            }
+                                        },
+                                        "required": ["host", "command"]
+                                    }
+                                }
+                            })
                     
                     # Make initial API call with tools
                     try:
