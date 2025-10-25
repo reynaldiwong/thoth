@@ -5,17 +5,10 @@
 </div>
 
 ---
-<div align="center">
+## Overview
 Thoth is an AI Agent that assist you with his knowledge — built to help engineers monitor, troubleshoot, and execute with natural commands. It understands your stack and suggests smarter workflows — all in one intelligent CLI interface.
-</div>
 
----
-
-## Table of Contents
-
-- [🌙 How to run](#-How-to-run)
-- [🤖 Supported LLM AI Providers](#-Supported-LLM-AI-Providers)
-- [🔧 Prerequisites](#-Prerequisites)
+<strong>Why Thoth?</strong> It's because i want the AI Agent to behave like Thoth — The Ancient Egypt God that is known for its Wisdom and Knowledge. — Before acting, he will observe, reflect, question his own perspective, think in cause and effect, and after many consideration then he will do it with assurity. Not just implusly do what the user tell him to do.
 
 ## 🌙 How to run
 
@@ -67,6 +60,7 @@ Thoth > /help
 - [Python 3.13+](https://www.python.org/downloads/)
 - [Git](https://git-scm.com/downloads)
 - [Google Cloud CLI](https://docs.cloud.google.com/sdk/docs/install)
+
 
 
 
